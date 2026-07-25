@@ -7,6 +7,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Messale Ambrosiano">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png">
+<link rel="shortcut icon" href="icons/favicon.ico">
 <title>Messale Ambrosiano — Composizione della Messa</title>
 <style>
   :root {
@@ -3208,10 +3213,20 @@ function pdgSantiDelGiorno(dateObj) {
 // STATO del pannello "Proprio del giorno"
 // ---------------------------------------------------------------------
 let pdgState = null;
-function pdgStatoIniziale(dateObj) {
-  const classificazione = classificaData(dateObj);
-  const santi = pdgSantiDelGiorno(dateObj);
-  const tempoInfo = pdgTrovaFormularioTempo(classificazione, dateObj);
+// usaGiornoSeguente: quando true (attivabile solo se dateObj è un sabato)
+// tutto il calcolo del Proprio del giorno (tempo liturgico, santi, formulario)
+// viene fatto sulla domenica seguente (dataObj + 1 giorno) invece che sul
+// sabato scelto, per la Messa prefestiva/vigiliare celebrata la sera del
+// sabato con il formulario della domenica. Il campo "Data" nel pannello
+// continua comunque a mostrare/accettare il sabato effettivamente scelto:
+// solo i dati liturgici sottostanti (classificazione, santi, formulario)
+// vengono calcolati sulla data "effettiva" (dataEffettiva).
+function pdgStatoIniziale(dateObj, usaGiornoSeguente) {
+  usaGiornoSeguente = !!usaGiornoSeguente && dateObj.getUTCDay() === 6;
+  const dataEffettiva = usaGiornoSeguente ? addDays(dateObj, 1) : dateObj;
+  const classificazione = classificaData(dataEffettiva);
+  const santi = pdgSantiDelGiorno(dataEffettiva);
+  const tempoInfo = pdgTrovaFormularioTempo(classificazione, dataEffettiva);
   // Default ragionevole (mai "silenzioso" sui casi ambigui): se c'è
   // esattamente un santo non facoltativo (o una solennità/festa), lo
   // preseleziona lasciando comunque cliccabile l'alternativa "feria";
@@ -3223,6 +3238,8 @@ function pdgStatoIniziale(dateObj) {
   }
   return {
     dateObj,
+    usaGiornoSeguente,
+    dataEffettiva,
     classificazione,
     santi,
     tempoInfo,
@@ -3415,7 +3432,14 @@ function pdgRenderPanelBody() {
   const dstrVal = classificaDataToInputValue(d);
   let html = '<div class="proprio-giorno-panel">';
   html += '<div class="pdg-row"><label for="pdg-data" class="pdg-label">Data:</label> <input type="date" id="pdg-data" value="' + dstrVal + '"></div>';
-  html += '<div class="pdg-tempo-liturgico"><strong>Tempo liturgico:</strong> ' + escapeHtml(st.classificazione.tempo) + ' — ' + escapeHtml(st.classificazione.settimana) + '</div>';
+  if (d.getUTCDay() === 6) {
+    // Sabato: la Messa vespertina può essere quella prefestiva/vigiliare
+    // della domenica seguente. La spunta ricalcola tempo liturgico, santi
+    // e formulario sulla domenica, lasciando il campo "Data" sul sabato.
+    const domenicaSuccessiva = addDays(d, 1);
+    html += '<div class="pdg-row"><label class="pdg-radio-riga" style="margin:0;"><input type="checkbox" id="pdg-prefestiva"' + (st.usaGiornoSeguente ? ' checked' : '') + '> Messa prefestiva: usa il formulario di domenica ' + escapeHtml(pdgDataItaliana(domenicaSuccessiva)) + '</label></div>';
+  }
+  html += '<div class="pdg-tempo-liturgico"><strong>Tempo liturgico:</strong> ' + escapeHtml(st.classificazione.tempo) + ' — ' + escapeHtml(st.classificazione.settimana) + (st.usaGiornoSeguente ? ' <span class="pdg-qualificatore">(formulario di domenica, anticipato al sabato sera)</span>' : '') + '</div>';
   if (st.classificazione.note && st.classificazione.note.length) {
     html += '<div class="pdg-note-calendario">' + st.classificazione.note.map(n => escapeHtml(n)).join('<br>') + '</div>';
   }
@@ -3454,6 +3478,16 @@ function pdgAttachListeners() {
       if (parts.length !== 3 || parts.some(isNaN)) return;
       const nuovaData = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
       pdgState = pdgStatoIniziale(nuovaData);
+      pdgRerender();
+    });
+  }
+  const prefestivaCheck = document.getElementById('pdg-prefestiva');
+  if (prefestivaCheck) {
+    prefestivaCheck.addEventListener('change', () => {
+      // Ricalcola l'intero stato (tempo liturgico, santi, formulario) sulla
+      // domenica seguente se la spunta è attiva, sul sabato altrimenti;
+      // il sabato scelto nel campo "Data" resta invariato.
+      pdgState = pdgStatoIniziale(pdgState.dateObj, prefestivaCheck.checked);
       pdgRerender();
     });
   }
